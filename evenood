@@ -1,10 +1,118 @@
-<mxfile host="app.diagrams.net" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36" version="24.7.13">
-  <diagram name="Page-1" id="sS4YifWSe3A2Mmm8av9d">
-    <mxGraphModel>
-      <root>
-        <mxCell id="0" />
-        <mxCell id="1" parent="0" />
-      </root>
-    </mxGraphModel>
-  </diagram>
-</mxfile>
+
+# grade_calculator.py
+# A flexible Python script to calculate grades from either a single total score
+# or a CSV of component scores with weights.
+#
+# Usage examples:
+#   1) Single score:
+#       python grade_calculator.py --score 86
+#   2) CSV with components:
+#       python grade_calculator.py --csv scores.csv --weights midterm=40,final=40,quiz=10,project=10 --out results.csv
+#
+# Customize the grade scale by editing GRADE_SCALE below.
+
+import argparse
+import sys
+import csv
+
+# Default Thai-style scale (adjust as needed)
+# Tuple list in format: (min_inclusive, letter)
+GRADE_SCALE = [
+    (80, "A"),
+    (75, "B+"),
+    (70, "B"),
+    (65, "C+"),
+    (60, "C"),
+    (55, "D+"),
+    (50, "D"),
+    (0,  "F"),
+]
+
+def to_letter(score: float) -> str:
+    for threshold, letter in GRADE_SCALE:
+        if score >= threshold:
+            return letter
+    return "F"
+
+def parse_weights(s: str):
+    # "midterm=40,final=40,quiz=10,project=10" -> dict
+    parts = s.split(",") if s else []
+    weights = {}
+    for p in parts:
+        if "=" not in p:
+            raise ValueError(f"Invalid weight part: {p}. Use key=value, separated by commas.")
+        k, v = p.split("=", 1)
+        k = k.strip()
+        try:
+            weights[k] = float(v)
+        except ValueError:
+            raise ValueError(f"Weight for {k} must be a number, got: {v}")
+    total = sum(weights.values())
+    if abs(total - 100.0) > 1e-6:
+        raise ValueError(f"Weights must sum to 100, got {total}.")
+    return weights
+
+def calc_weighted_total(row: dict, weights: dict) -> float:
+    total = 0.0
+    for key, w in weights.items():
+        if key not in row:
+            raise KeyError(f"Column '{key}' not found in CSV.")
+        try:
+            total += float(row[key]) * (w / 100.0)
+        except ValueError:
+            raise ValueError(f"Value for '{key}' must be numeric, got '{row[key]}'")
+    return total
+
+def run_single(score: float):
+    if score < 0 or score > 100:
+        print("Score must be between 0 and 100.", file=sys.stderr)
+        sys.exit(1)
+    letter = to_letter(score)
+    print(f"Total: {score:.2f}\nGrade: {letter}")
+
+def run_csv(path: str, weights: dict, out_path: str = None):
+    rows = []
+    with open(path, newline='', encoding='utf-8-sig') as f:
+        reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames or []
+        # pass-through existing columns
+        for row in reader:
+            total = calc_weighted_total(row, weights)
+            row["_total"] = round(total, 2)
+            row["_grade"] = to_letter(total)
+            rows.append(row)
+    out_path = out_path or "results.csv"
+    with open(out_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames + ["_total", "_grade"])
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"Wrote: {out_path} (added columns: _total, _grade)")
+
+def main():
+    parser = argparse.ArgumentParser(description="Calculate grades from a single score or a CSV of components.")
+    parser.add_argument("--score", type=float, help="Single total score (0-100).")
+    parser.add_argument("--csv", type=str, help="Path to CSV with component scores.")
+    parser.add_argument("--weights", type=str, help="Weights as key=value pairs summing to 100 (e.g., midterm=40,final=40,quiz=10,project=10).")
+    parser.add_argument("--out", type=str, help="Output CSV path (default: results.csv).")
+    args = parser.parse_args()
+
+    if args.score is not None and args.csv:
+        print("Please use either --score or --csv (not both).", file=sys.stderr)
+        sys.exit(1)
+
+    if args.score is not None:
+        run_single(args.score)
+        return
+
+    if args.csv:
+        if not args.weights:
+            print("When using --csv, you must provide --weights.", file=sys.stderr)
+            sys.exit(1)
+        weights = parse_weights(args.weights)
+        run_csv(args.csv, weights, args.out)
+        return
+
+    parser.print_help()
+
+if __name__ == "__main__":
+    main()
